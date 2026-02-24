@@ -1,0 +1,871 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LinkedIn Influence Network — Comment Connections</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@400;600;700;800&display=swap');
+
+  :root {
+    --bg: #080c14;
+    --bg2: #0d1320;
+    --bg3: #111929;
+    --grid: rgba(255,255,255,0.04);
+    --star-color: #00d4ff;
+    --star-glow: rgba(0,212,255,0.3);
+    --dm-color: #ff6b35;
+    --dm-glow: rgba(255,107,53,0.3);
+    --edge-star: rgba(0,212,255,0.25);
+    --edge-dm: rgba(255,107,53,0.5);
+    --text: #e8edf5;
+    --text-dim: #6b7a9a;
+    --accent: #00d4ff;
+    --accent2: #ff6b35;
+    --panel: rgba(13,19,32,0.92);
+    --border: rgba(255,255,255,0.08);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    font-family: 'Syne', sans-serif;
+    color: var(--text);
+    overflow: hidden;
+    height: 100vh;
+    width: 100vw;
+  }
+
+  /* Animated grid background */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image:
+      linear-gradient(var(--grid) 1px, transparent 1px),
+      linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+    background-size: 48px 48px;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  /* Radial gradient overlay */
+  body::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: radial-gradient(ellipse 70% 60% at 50% 50%, transparent 40%, rgba(8,12,20,0.85) 100%);
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  #canvas {
+    position: fixed;
+    inset: 0;
+    z-index: 1;
+  }
+
+  /* Header */
+  #header {
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    z-index: 10;
+    padding: 20px 28px 16px;
+    background: linear-gradient(to bottom, rgba(8,12,20,0.98) 70%, transparent);
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 20px;
+  }
+
+  #header-left h1 {
+    font-size: 15px;
+    font-weight: 800;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--text);
+    line-height: 1;
+  }
+  #header-left p {
+    font-family: 'DM Mono', monospace;
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-top: 5px;
+    letter-spacing: 0.06em;
+  }
+
+  .stat-block {
+    display: flex;
+    gap: 24px;
+    align-items: flex-end;
+  }
+  .stat {
+    text-align: right;
+  }
+  .stat-val {
+    font-size: 22px;
+    font-weight: 800;
+    line-height: 1;
+    color: var(--accent);
+  }
+  .stat-val.orange { color: var(--accent2); }
+  .stat-label {
+    font-family: 'DM Mono', monospace;
+    font-size: 9px;
+    color: var(--text-dim);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    margin-top: 3px;
+  }
+
+  /* Legend */
+  #legend {
+    position: fixed;
+    bottom: 24px;
+    left: 28px;
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .legend-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-family: 'DM Mono', monospace;
+    font-size: 10px;
+    color: var(--text-dim);
+    letter-spacing: 0.06em;
+  }
+
+  .legend-node {
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .legend-edge {
+    width: 28px; height: 2px;
+    flex-shrink: 0;
+    border-radius: 2px;
+    position: relative;
+  }
+  .legend-edge::after {
+    content: '▶';
+    position: absolute;
+    right: -4px;
+    top: -5px;
+    font-size: 8px;
+  }
+
+  /* Tooltip */
+  #tooltip {
+    position: fixed;
+    z-index: 20;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.15s ease;
+    max-width: 280px;
+  }
+
+  #tooltip.visible { opacity: 1; }
+
+  .tooltip-inner {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 14px 16px;
+    backdrop-filter: blur(12px);
+    box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+  }
+
+  .tt-type {
+    font-family: 'DM Mono', monospace;
+    font-size: 9px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    margin-bottom: 6px;
+    padding: 2px 6px;
+    border-radius: 3px;
+    display: inline-block;
+  }
+  .tt-type.star { background: rgba(0,212,255,0.15); color: var(--star-color); }
+  .tt-type.dm { background: rgba(255,107,53,0.15); color: var(--dm-color); }
+
+  .tt-name {
+    font-size: 13px;
+    font-weight: 700;
+    line-height: 1.3;
+    color: var(--text);
+    margin-bottom: 6px;
+  }
+
+  .tt-role {
+    font-family: 'DM Mono', monospace;
+    font-size: 10px;
+    color: var(--text-dim);
+    line-height: 1.4;
+    margin-bottom: 10px;
+  }
+
+  .tt-stats {
+    display: flex;
+    gap: 16px;
+  }
+  .tt-stat-val {
+    font-family: 'DM Mono', monospace;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--accent);
+  }
+  .tt-stat-label {
+    font-family: 'DM Mono', monospace;
+    font-size: 9px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+
+  .tt-divider {
+    height: 1px;
+    background: var(--border);
+    margin: 10px 0;
+  }
+
+  .tt-connections {
+    font-family: 'DM Mono', monospace;
+    font-size: 10px;
+    color: var(--text-dim);
+    line-height: 1.6;
+  }
+  .tt-connections span {
+    color: var(--text);
+  }
+
+  /* Controls */
+  #controls {
+    position: fixed;
+    bottom: 24px;
+    right: 28px;
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    align-items: flex-end;
+  }
+
+  .ctrl-btn {
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    font-family: 'DM Mono', monospace;
+    font-size: 11px;
+    padding: 7px 14px;
+    border-radius: 4px;
+    cursor: pointer;
+    letter-spacing: 0.06em;
+    transition: all 0.15s;
+    backdrop-filter: blur(8px);
+  }
+  .ctrl-btn:hover {
+    color: var(--text);
+    border-color: rgba(255,255,255,0.2);
+    background: var(--bg2);
+  }
+  .ctrl-btn.active {
+    color: var(--accent);
+    border-color: rgba(0,212,255,0.4);
+  }
+
+  /* Filter chips */
+  #filters {
+    position: fixed;
+    top: 80px;
+    left: 28px;
+    z-index: 10;
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    max-width: 460px;
+  }
+
+  .filter-chip {
+    font-family: 'DM Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 0.06em;
+    padding: 5px 12px;
+    border-radius: 20px;
+    cursor: pointer;
+    border: 1px solid var(--border);
+    background: var(--bg3);
+    color: var(--text-dim);
+    transition: all 0.15s;
+  }
+  .filter-chip:hover { color: var(--text); }
+  .filter-chip.active-star {
+    border-color: rgba(0,212,255,0.5);
+    background: rgba(0,212,255,0.08);
+    color: var(--star-color);
+  }
+  .filter-chip.active-dm {
+    border-color: rgba(255,107,53,0.5);
+    background: rgba(255,107,53,0.08);
+    color: var(--dm-color);
+  }
+  .filter-chip.active-both {
+    border-color: rgba(180,100,200,0.5);
+    background: rgba(180,100,200,0.08);
+    color: #c47aff;
+  }
+
+  /* Search */
+  #search-wrap {
+    position: fixed;
+    top: 80px;
+    right: 28px;
+    z-index: 10;
+  }
+  #search {
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: 'DM Mono', monospace;
+    font-size: 11px;
+    padding: 8px 14px;
+    border-radius: 4px;
+    outline: none;
+    width: 200px;
+    letter-spacing: 0.04em;
+    transition: border-color 0.15s;
+  }
+  #search::placeholder { color: var(--text-dim); }
+  #search:focus { border-color: rgba(0,212,255,0.4); }
+
+  /* Node labels */
+  .node-label {
+    font-family: 'Syne', sans-serif;
+    font-weight: 600;
+    pointer-events: none;
+    user-select: none;
+  }
+
+  /* Pulse animation for highlighted nodes */
+  @keyframes pulse-ring {
+    0% { r: 12px; opacity: 0.6; }
+    100% { r: 24px; opacity: 0; }
+  }
+
+  .pulse-ring {
+    animation: pulse-ring 1.5s ease-out infinite;
+  }
+</style>
+</head>
+<body>
+
+<div id="header">
+  <div id="header-left">
+    <h1>LinkedIn Influence Network</h1>
+    <p>Comment connections · Cross-network stars ↔ Decision-makers</p>
+  </div>
+  <div class="stat-block">
+    <div class="stat">
+      <div class="stat-val" id="stat-nodes">71</div>
+      <div class="stat-label">Nodes</div>
+    </div>
+    <div class="stat">
+      <div class="stat-val" id="stat-edges">91</div>
+      <div class="stat-label">Connections</div>
+    </div>
+    <div class="stat">
+      <div class="stat-val orange" id="stat-interactions">287</div>
+      <div class="stat-label">Interactions</div>
+    </div>
+  </div>
+</div>
+
+<div id="filters">
+  <div class="filter-chip active-both" data-filter="all" onclick="setFilter('all', this)">ALL</div>
+  <div class="filter-chip" data-filter="star" onclick="setFilter('star', this)">CROSS-STARS ONLY</div>
+  <div class="filter-chip" data-filter="dm" onclick="setFilter('dm', this)">DECISION-MAKERS ONLY</div>
+  <div class="filter-chip" data-filter="reciprocal" onclick="setFilter('reciprocal', this)">RECIPROCAL ONLY</div>
+</div>
+
+<div id="search-wrap">
+  <input type="text" id="search" placeholder="Search nodes…" oninput="searchNodes(this.value)">
+</div>
+
+<svg id="canvas"></svg>
+
+<div id="tooltip">
+  <div class="tooltip-inner">
+    <div class="tt-type" id="tt-type">CROSS-STAR</div>
+    <div class="tt-name" id="tt-name">Name</div>
+    <div class="tt-role" id="tt-role">Role</div>
+    <div class="tt-stats">
+      <div>
+        <div class="tt-stat-val" id="tt-followers">—</div>
+        <div class="tt-stat-label">Followers</div>
+      </div>
+      <div>
+        <div class="tt-stat-val" id="tt-connections">—</div>
+        <div class="tt-stat-label">Connections</div>
+      </div>
+      <div>
+        <div class="tt-stat-val" id="tt-interactions">—</div>
+        <div class="tt-stat-label">Interactions</div>
+      </div>
+    </div>
+    <div class="tt-divider"></div>
+    <div class="tt-connections" id="tt-conn-list">—</div>
+  </div>
+</div>
+
+<div id="legend">
+  <div class="legend-row">
+    <div class="legend-node" style="background:#00d4ff; box-shadow:0 0 6px rgba(0,212,255,0.6)"></div>
+    Cross-network star
+  </div>
+  <div class="legend-row">
+    <div class="legend-node" style="background:#ff6b35; box-shadow:0 0 6px rgba(255,107,53,0.6)"></div>
+    Decision-maker / org
+  </div>
+  <div class="legend-row">
+    <div class="legend-edge" style="background:rgba(0,212,255,0.5); color:rgba(0,212,255,0.5)"></div>
+    Star commenting on DM
+  </div>
+  <div class="legend-row">
+    <div class="legend-edge" style="background:rgba(255,107,53,0.7); color:rgba(255,107,53,0.7)"></div>
+    DM commenting on star
+  </div>
+  <div class="legend-row" style="margin-top:4px;">
+    <div style="width:10px;height:10px;border-radius:50%;border:2px solid #c47aff;flex-shrink:0"></div>
+    Reciprocal relationship
+  </div>
+</div>
+
+<div id="controls">
+  <button class="ctrl-btn" onclick="resetZoom()">RESET VIEW</button>
+  <button class="ctrl-btn" id="btn-freeze" onclick="toggleFreeze()">FREEZE</button>
+  <button class="ctrl-btn" onclick="downloadSVG()">EXPORT SVG</button>
+</div>
+
+<script>
+const RAW = {"nodes": [{"id": "amandabrocktech", "label": "Professor Amanda Brock", "type": "cross_star", "followers": 15026, "connections": 10829, "job_title": "CEO", "company": "OpenUK", "weight": 14}, {"id": "adam-sproston-63872725b", "label": "Adam Sproston", "type": "cross_star", "followers": 14855, "connections": 1944, "job_title": "Senior His Majesty\u2019s Inspector, SEND, AP and Inclusion", "company": "Ofsted", "weight": 4}, {"id": "davidbilger", "label": "Dave Bilger", "type": "cross_star", "followers": 1876, "connections": 1763, "job_title": "Global Head of Infrastructure & Cloud", "company": "Vertiv", "weight": 3}, {"id": "paul-anthony-edsall-2a1416217", "label": "Paul Anthony Edsall", "type": "cross_star", "followers": 12645, "connections": 12661, "job_title": "Strategic Partnerships Development Manager", "company": "Vaculug Limited", "weight": 3}, {"id": "mike-ore-6b78592a7", "label": "Mike Ore", "type": "cross_star", "followers": 1084, "connections": 936, "job_title": "Co Managing Director", "company": "CareTech", "weight": 5}, {"id": "alternativemedicinedoctor", "label": "Prof. Joseph Chikelue Obi", "type": "cross_star", "followers": 30569, "connections": 29987, "job_title": "Chancellor, Royal Collegium", "company": "Royal Collegium", "weight": 17}, {"id": "tonyfabrizio", "label": "Tony Fabrizio", "type": "cross_star", "followers": 17969, "connections": 18082, "job_title": "Head of Europe — Aerospace & Defence", "company": "Stealth Defence Programs", "weight": 6}, {"id": "professor-richard-benham-fciis-fbcs-15108649", "label": "Prof. Richard Benham", "type": "cross_star", "followers": 9146, "connections": 8533, "job_title": "Chief Digital Adviser", "company": "Royal Military Academy Sandhurst", "weight": 5}, {"id": "brian-smith-25b70676", "label": "Brian Smith", "type": "cross_star", "followers": 433, "connections": 381, "job_title": "Strategic Intelligence", "company": "Yorkshire Water", "weight": 5}, {"id": "peter-austin-447a8b30", "label": "Peter Austin", "type": "cross_star", "followers": 659, "connections": 559, "job_title": "Retired Company Director", "company": "", "weight": 4}, {"id": "steph-westbrook-97206724a", "label": "Steph Westbrook", "type": "cross_star", "followers": 812, "connections": 740, "job_title": "CS Educator & AI Researcher", "company": "Protocol Education", "weight": 14}, {"id": "jamesddewar", "label": "James Dewar", "type": "cross_star", "followers": 3171, "connections": 2831, "job_title": "Chief Executive Officer", "company": "Dewar Board Advisory", "weight": 6}, {"id": "anamariamaris", "label": "Ana M", "type": "cross_star", "followers": 2704, "connections": 2506, "job_title": "VP Marketing, Foreign Markets", "company": "", "weight": 16}, {"id": "andy-jenkinson-96210727", "label": "Andy Jenkinson", "type": "cross_star", "followers": 38901, "connections": 29986, "job_title": "CEO, Cybersec Innovation", "company": "Cybersec Innovation Partners", "weight": 5}, {"id": "dari-taylor-169b2672", "label": "Dari Taylor", "type": "cross_star", "followers": 254, "connections": 252, "job_title": "Retired MP", "company": "UK Government", "weight": 5}, {"id": "jacqueline-diaz-nieto-931423b4", "label": "Jacqueline Diaz-Nieto", "type": "cross_star", "followers": 1699, "connections": 1379, "job_title": "Sustainable Drainage Engineer", "company": "Environmental Protection Group", "weight": 5}, {"id": "orhan-kanala-9241aa2a4", "label": "Orhan Kanala", "type": "cross_star", "followers": 2529, "connections": 2375, "job_title": "Management Assistant", "company": "BAE Systems", "weight": 5}, {"id": "stephen-mclean-01ab7653", "label": "Stephen McLean", "type": "cross_star", "followers": 406, "connections": 401, "job_title": "Internal Account Manager", "company": "Bischof+Klein", "weight": 7}, {"id": "advsw", "label": "Steve Williams", "type": "cross_star", "followers": 647, "connections": 594, "job_title": "Director", "company": "Advance Software", "weight": 18}, {"id": "charles-forte-8a721415", "label": "Charles Forte", "type": "cross_star", "followers": 13161, "connections": 7490, "job_title": "Director General CDIO", "company": "UK Ministry of Defence", "weight": 17}, {"id": "richard-browne", "label": "Richard Browne", "type": "cross_star", "followers": 2532, "connections": 2301, "job_title": "Deputy Director, Enterprise Data & AI", "company": "FCDO", "weight": 3}, {"id": "ralph-kachur-67083a53", "label": "Ralph Kachur", "type": "cross_star", "followers": 687, "connections": 523, "job_title": "President", "company": "ROATI Technologies", "weight": 3}, {"id": "davidavaughan", "label": "David V.", "type": "cross_star", "followers": 17324, "connections": 17490, "job_title": "Director", "company": "Global Connections Agency", "weight": 3}, {"id": "naiem-iqbal-4166631b5", "label": "Naiem Iqbal", "type": "cross_star", "followers": 375, "connections": 362, "job_title": "Chief Enterprise Architect for ISR", "company": "UK Ministry of Defence", "weight": 9}, {"id": "j-mark-dodds-frsa-a353ab6", "label": "J Mark Dodds FRSA", "type": "cross_star", "followers": 7337, "connections": 7059, "job_title": "National Executive", "company": "CAMRA", "weight": 3}, {"id": "antonycarpen", "label": "Antony Carpen", "type": "cross_star", "followers": 688, "connections": 523, "job_title": "Historian", "company": "Lost Cambridge", "weight": 4}, {"id": "nicky-morris-7279627", "label": "Nicky Morris", "type": "cross_star", "followers": 7132, "connections": 7010, "job_title": "Project Manager / TherapyFast", "company": "", "weight": 32}, {"id": "oliver-saunders-890a2739", "label": "Oliver Saunders", "type": "cross_star", "followers": 97, "connections": 52, "job_title": "Owner", "company": "OMG Enterprises", "weight": 28}, {"id": "vijaykluthra", "label": "Vijay K. Luthra", "type": "cross_star", "followers": 12648, "connections": 11435, "job_title": "Managing Partner, Govt Reform", "company": "Ceva", "weight": 16}, {"id": "asimkhwaja", "label": "Asim Khwaja", "type": "cross_star", "followers": 4646, "connections": 3027, "job_title": "UK Gov Quantum Working Group", "company": "UK Civil Service", "weight": 24}, {"id": "dott-linda-pasqui-phd-in-law-1347b5127", "label": "Linda Pasqui", "type": "cross_star", "followers": 421, "connections": 412, "job_title": "Healthy Start Lead", "company": "Barts Health NHS Trust", "weight": 10}, {"id": "dsit-node", "label": "DSIT", "type": "decision_maker", "followers": 0, "connections": 0, "job_title": "Dept for Science, Innovation & Technology", "company": "", "weight": 188}, {"id": "marcus-rink-01279237", "label": "Marcus Rink", "type": "decision_maker", "followers": 0, "connections": 0, "job_title": "", "company": "", "weight": 1}, {"id": "josh-macalister-mp-47723750", "label": "Josh MacAlister MP", "type": "decision_maker", "followers": 0, "connections": 0, "job_title": "", "company": "", "weight": 1}, {"id": "dina-kakaras-4305b756", "label": "Dina Kakaras", "type": "decision_maker", "followers": 0, "connections": 0, "job_title": "", "company": "", "weight": 1}, {"id": "mayorchriscooke", "label": "Chris Cooke", "type": "decision_maker", "followers": 0, "connections": 0, "job_title": "", "company": "", "weight": 1}, {"id": "sophiaignatidou", "label": "Sophia Ignatidou", "type": "decision_maker", "followers": 0, "connections": 0, "job_title": "", "company": "", "weight": 1}, {"id": "john-pettigrew-ng", "label": "John Pettigrew CBE", "type": "decision_maker", "followers": 0, "connections": 0, "job_title": "", "company": "", "weight": 1}, {"id": "ross-a-a6768968", "label": "Ross A", "type": "decision_maker", "followers": 0, "connections": 0, "job_title": "", "company": "", "weight": 1}, {"id": "sir-martyn-oliver-208265132", "label": "Sir Martyn Oliver", "type": "decision_maker", "followers": 0, "connections": 0, "job_title": "", "company": "", "weight": 2}, {"id": "mivyjames", "label": "Mivy James FBCS", "type": "decision_maker", "followers": 0, "connections": 0, "job_title": "", "company": "", "weight": 2}, {"id": "itssambentley", "label": "Sam Bentley", "type": "decision_maker", "followers": 0, "connections": 0, "job_title": "", "company": "", "weight": 1}, {"id": "natalie-black-cbe", "label": "Natalie Black CBE", "type": "decision_maker", "followers": 0, "connections": 0, "job_title": "", "company": "", "weight": 12}, {"id": "victoria-cope-mba-fraes-fcips-fwcc-0b497b16", "label": "Victoria Cope", "type": "decision_maker", "followers": 0, "connections": 0, "job_title": "", "company": "", "weight": 3}, {"id": "lucy-d-orsi-cvo-qpm-232915104", "label": "Lucy D'Orsi CVO QPM", "type": "decision_maker", "followers": 0, "connections": 0, "job_title": "", "company": "", "weight": 1}, {"id": "andy-lord-8787763", "label": "Andy Lord", "type": "decision_maker", "followers": 0, "connections": 0, "job_title": "", "company": "", "weight": 1}, {"id": "nathanwhite13", "label": "Nathan White", "type": "decision_maker", "followers": 0, "connections": 0, "job_title": "", "company": "", "weight": 1}, {"id": "richard-horne-0405743", "label": "Richard Horne", "type": "decision_maker", "followers": 0, "connections": 0, "job_title": "", "company": "", "weight": 2}, {"id": "ann-marie-m-8688752b1", "label": "Ann-Marie M.", "type": "decision_maker", "followers": 0, "connections": 0, "job_title": "", "company": "", "weight": 1}, {"id": "feryal-clark-20a96728", "label": "Feryal Clark", "type": "decision_maker", "followers": 0, "connections": 0, "job_title": "", "company": "", "weight": 1}, {"id": "richard-morgan-", "label": "Richard Morgan", "type": "decision_maker", "followers": 0, "connections": 0, "job_title": "", "company": "", "weight": 1}, {"id": "sarah-sharples-cbe-freng-2398b044", "label": "Sarah Sharples CBE", "type": "decision_maker", "followers": 0, "connections": 0, "job_title": "", "company": "", "weight": 3}, {"id": "sir-tom-copinger-symes-528b1170", "label": "Sir Tom Copinger-Symes", "type": "decision_maker", "followers": 0, "connections": 0, "job_title": "", "company": "", "weight": 3}, {"id": "lesliebeavers", "label": "Leslie Beavers", "type": "decision_maker", "followers": 0, "connections": 0, "job_title": "", "company": "", "weight": 1}, {"id": "dm-forte-target", "label": "Charles Forte (DM)", "type": "decision_maker", "followers": 0, "connections": 0, "job_title": "Director General CDIO", "company": "UK Ministry of Defence", "weight": 17}, {"id": "sarah-cardell-756b34228", "label": "Sarah Cardell", "type": "decision_maker", "followers": 0, "connections": 0, "job_title": "", "company": "", "weight": 1}, {"id": "alex-jones-6a741221", "label": "Alex Jones", "type": "decision_maker", "followers": 0, "connections": 0, "job_title": "", "company": "", "weight": 2}, {"id": "olliewhitehouse", "label": "Ollie W.", "type": "decision_maker", "followers": 0, "connections": 0, "job_title": "", "company": "", "weight": 1}, {"id": "rt-hon-andrew-stephenson-cbe-028a1531b", "label": "Andrew Stephenson CBE", "type": "decision_maker", "followers": 0, "connections": 0, "job_title": "", "company": "", "weight": 2}, {"id": "davidcblack", "label": "David Black", "type": "decision_maker", "followers": 0, "connections": 0, "job_title": "", "company": "", "weight": 3}, {"id": "chionwurah", "label": "Chi Onwurah MP", "type": "decision_maker", "followers": 0, "connections": 0, "job_title": "", "company": "", "weight": 7}, {"id": "damian-hinds-4aa8116", "label": "Damian Hinds", "type": "decision_maker", "followers": 0, "connections": 0, "job_title": "", "company": "", "weight": 1}, {"id": "james-lawson", "label": "James Lawson", "type": "decision_maker", "followers": 0, "connections": 0, "job_title": "", "company": "", "weight": 3}, {"id": "hilary-mcgrady-5aa365216", "label": "Hilary McGrady", "type": "decision_maker", "followers": 0, "connections": 0, "job_title": "", "company": "", "weight": 1}, {"id": "1markpeters", "label": "Mark Peters", "type": "decision_maker", "followers": 0, "connections": 0, "job_title": "", "company": "", "weight": 1}, {"id": "mark-hazzard-a4b12a60", "label": "Mark Hazzard", "type": "decision_maker", "followers": 0, "connections": 0, "job_title": "", "company": "", "weight": 1}, {"id": "liz-lloyd-7596a76b", "label": "Liz Lloyd", "type": "decision_maker", "followers": 0, "connections": 0, "job_title": "", "company": "", "weight": 4}, {"id": "jon-yates-mbe-0718358", "label": "Jon Yates MBE", "type": "decision_maker", "followers": 0, "connections": 0, "job_title": "", "company": "", "weight": 1}, {"id": "peter-kyle-a3004712", "label": "Peter Kyle MP", "type": "decision_maker", "followers": 0, "connections": 0, "job_title": "", "company": "", "weight": 8}, {"id": "rt-hon-steve-reed-obe-mp-8990461", "label": "Steve Reed OBE MP", "type": "decision_maker", "followers": 0, "connections": 0, "job_title": "", "company": "", "weight": 2}, {"id": "wes-streeting-mp", "label": "Wes Streeting MP", "type": "decision_maker", "followers": 0, "connections": 0, "job_title": "", "company": "", "weight": 7}, {"id": "defence-digital", "label": "Defence Digital", "type": "decision_maker", "followers": 0, "connections": 0, "job_title": "", "company": "", "weight": 15}, {"id": "defra", "label": "Defra", "type": "decision_maker", "followers": 0, "connections": 0, "job_title": "", "company": "", "weight": 10}, {"id": "dhsc", "label": "DHSC", "type": "decision_maker", "followers": 0, "connections": 0, "job_title": "Dept of Health & Social Care", "company": "", "weight": 46}, {"id": "mhclg", "label": "MHCLG", "type": "decision_maker", "followers": 0, "connections": 0, "job_title": "Min. of Housing, Communities & Local Govt", "company": "", "weight": 5}, {"id": "information-commissioner", "label": "ICO", "type": "decision_maker", "followers": 0, "connections": 0, "job_title": "Information Commissioner's Office", "company": "", "weight": 8}, {"id": "ofcom-node", "label": "Ofcom", "type": "decision_maker", "followers": 0, "connections": 0, "job_title": "", "company": "", "weight": 4}, {"id": "ofsted-node", "label": "Ofsted", "type": "decision_maker", "followers": 0, "connections": 0, "job_title": "", "company": "", "weight": 15}, {"id": "ncsc-node", "label": "NCSC", "type": "decision_maker", "followers": 0, "connections": 0, "job_title": "National Cyber Security Centre", "company": "", "weight": 3}, {"id": "team-defence-info", "label": "Team Defence Info", "type": "decision_maker", "followers": 0, "connections": 0, "job_title": "", "company": "", "weight": 5}, {"id": "ukcs-node", "label": "UK Civil Service", "type": "decision_maker", "followers": 0, "connections": 0, "job_title": "", "company": "", "weight": 2}, {"id": "computerweekly", "label": "ComputerWeekly", "type": "decision_maker", "followers": 0, "connections": 0, "job_title": "", "company": "", "weight": 10}, {"id": "uh-node", "label": "Unrecognised Heroes", "type": "decision_maker", "followers": 0, "connections": 0, "job_title": "", "company": "", "weight": 4}, {"id": "cma-node", "label": "CMA", "type": "decision_maker", "followers": 0, "connections": 0, "job_title": "Competition & Markets Authority", "company": "", "weight": 5}, {"id": "tfl-node", "label": "Transport for London", "type": "decision_maker", "followers": 0, "connections": 0, "job_title": "", "company": "", "weight": 2}, {"id": "dataiq-node", "label": "DataIQ", "type": "decision_maker", "followers": 0, "connections": 0, "job_title": "", "company": "", "weight": 1}, {"id": "env-agency", "label": "Environment Agency", "type": "decision_maker", "followers": 0, "connections": 0, "job_title": "", "company": "", "weight": 2}, {"id": "gov-analysis", "label": "Gov Analysis Function", "type": "decision_maker", "followers": 0, "connections": 0, "job_title": "", "company": "", "weight": 3}, {"id": "uk-health-sec", "label": "UK Health Security Agency", "type": "decision_maker", "followers": 0, "connections": 0, "job_title": "", "company": "", "weight": 1}, {"id": "dept-biz-trade", "label": "Dept Business & Trade", "type": "decision_maker", "followers": 0, "connections": 0, "job_title": "", "company": "", "weight": 1}],
+"edges": [
+  {"source": "advsw", "target": "chionwurah", "count": 3, "direction": "star_to_dm"},
+  {"source": "amandabrocktech", "target": "chionwurah", "count": 4, "direction": "star_to_dm"},
+  {"source": "oliver-saunders-890a2739", "target": "dhsc", "count": 28, "direction": "star_to_dm"},
+  {"source": "nicky-morris-7279627", "target": "dsit-node", "count": 30, "direction": "star_to_dm"},
+  {"source": "asimkhwaja", "target": "dsit-node", "count": 20, "direction": "star_to_dm"},
+  {"source": "amandabrocktech", "target": "computerweekly", "count": 10, "direction": "star_to_dm"},
+  {"source": "advsw", "target": "dsit-node", "count": 8, "direction": "star_to_dm"},
+  {"source": "andy-jenkinson-96210727", "target": "natalie-black-cbe", "count": 1, "direction": "star_to_dm"},
+  {"source": "andy-jenkinson-96210727", "target": "richard-horne-0405743", "count": 2, "direction": "star_to_dm"},
+  {"source": "asimkhwaja", "target": "olliewhitehouse", "count": 1, "direction": "star_to_dm"},
+  {"source": "steph-westbrook-97206724a", "target": "ofsted-node", "count": 14, "direction": "star_to_dm"},
+  {"source": "antonycarpen", "target": "mhclg", "count": 3, "direction": "star_to_dm"},
+  {"source": "alternativemedicinedoctor", "target": "ann-marie-m-8688752b1", "count": 1, "direction": "star_to_dm"},
+  {"source": "brian-smith-25b70676", "target": "davidcblack", "count": 1, "direction": "star_to_dm"},
+  {"source": "stephen-mclean-01ab7653", "target": "davidcblack", "count": 2, "direction": "star_to_dm"},
+  {"source": "brian-smith-25b70676", "target": "marcus-rink-01279237", "count": 1, "direction": "star_to_dm"},
+  {"source": "vijaykluthra", "target": "sarah-sharples-cbe-freng-2398b044", "count": 1, "direction": "star_to_dm"},
+  {"source": "antonycarpen", "target": "sarah-sharples-cbe-freng-2398b044", "count": 1, "direction": "star_to_dm"},
+  {"source": "davidavaughan", "target": "sarah-sharples-cbe-freng-2398b044", "count": 1, "direction": "star_to_dm"},
+  {"source": "advsw", "target": "peter-kyle-a3004712", "count": 7, "direction": "star_to_dm"},
+  {"source": "peter-austin-447a8b30", "target": "defra", "count": 4, "direction": "star_to_dm"},
+  {"source": "asimkhwaja", "target": "sophiaignatidou", "count": 1, "direction": "star_to_dm"},
+  {"source": "tonyfabrizio", "target": "sir-tom-copinger-symes-528b1170", "count": 1, "direction": "star_to_dm"},
+  {"source": "jamesddewar", "target": "sir-tom-copinger-symes-528b1170", "count": 1, "direction": "star_to_dm"},
+  {"source": "charles-forte-8a721415", "target": "lesliebeavers", "count": 1, "direction": "star_to_dm"},
+  {"source": "adam-sproston-63872725b", "target": "jon-yates-mbe-0718358", "count": 1, "direction": "star_to_dm"},
+  {"source": "dari-taylor-169b2672", "target": "mhclg", "count": 4, "direction": "star_to_dm"},
+  {"source": "alternativemedicinedoctor", "target": "josh-macalister-mp-47723750", "count": 1, "direction": "star_to_dm"},
+  {"source": "alternativemedicinedoctor", "target": "dhsc", "count": 10, "direction": "star_to_dm"},
+  {"source": "vijaykluthra", "target": "defence-digital", "count": 9, "direction": "star_to_dm"},
+  {"source": "nicky-morris-7279627", "target": "feryal-clark-20a96728", "count": 1, "direction": "star_to_dm"},
+  {"source": "anamariamaris", "target": "liz-lloyd-7596a76b", "count": 3, "direction": "star_to_dm"},
+  {"source": "ralph-kachur-67083a53", "target": "liz-lloyd-7596a76b", "count": 1, "direction": "star_to_dm"},
+  {"source": "andy-jenkinson-96210727", "target": "john-pettigrew-ng", "count": 1, "direction": "star_to_dm"},
+  {"source": "adam-sproston-63872725b", "target": "alex-jones-6a741221", "count": 1, "direction": "star_to_dm"},
+  {"source": "professor-richard-benham-fciis-fbcs-15108649", "target": "uh-node", "count": 4, "direction": "star_to_dm"},
+  {"source": "ralph-kachur-67083a53", "target": "ncsc-node", "count": 2, "direction": "star_to_dm"},
+  {"source": "davidavaughan", "target": "lucy-d-orsi-cvo-qpm-232915104", "count": 1, "direction": "star_to_dm"},
+  {"source": "paul-anthony-edsall-2a1416217", "target": "andy-lord-8787763", "count": 1, "direction": "star_to_dm"},
+  {"source": "nicky-morris-7279627", "target": "damian-hinds-4aa8116", "count": 1, "direction": "star_to_dm"},
+  {"source": "andy-jenkinson-96210727", "target": "information-commissioner", "count": 1, "direction": "star_to_dm"},
+  {"source": "anamariamaris", "target": "natalie-black-cbe", "count": 11, "direction": "star_to_dm"},
+  {"source": "paul-anthony-edsall-2a1416217", "target": "dsit-node", "count": 2, "direction": "star_to_dm"},
+  {"source": "asimkhwaja", "target": "peter-kyle-a3004712", "count": 1, "direction": "star_to_dm"},
+  {"source": "richard-browne", "target": "dataiq-node", "count": 1, "direction": "star_to_dm"},
+  {"source": "dott-linda-pasqui-phd-in-law-1347b5127", "target": "dhsc", "count": 8, "direction": "star_to_dm"},
+  {"source": "j-mark-dodds-frsa-a353ab6", "target": "rt-hon-steve-reed-obe-mp-8990461", "count": 1, "direction": "star_to_dm"},
+  {"source": "alternativemedicinedoctor", "target": "rt-hon-steve-reed-obe-mp-8990461", "count": 1, "direction": "star_to_dm"},
+  {"source": "jacqueline-diaz-nieto-931423b4", "target": "defra", "count": 4, "direction": "star_to_dm"},
+  {"source": "jacqueline-diaz-nieto-931423b4", "target": "itssambentley", "count": 1, "direction": "star_to_dm"},
+  {"source": "stephen-mclean-01ab7653", "target": "cma-node", "count": 5, "direction": "star_to_dm"},
+  {"source": "dott-linda-pasqui-phd-in-law-1347b5127", "target": "wes-streeting-mp", "count": 2, "direction": "star_to_dm"},
+  {"source": "orhan-kanala-9241aa2a4", "target": "defence-digital", "count": 4, "direction": "star_to_dm"},
+  {"source": "davidavaughan", "target": "mivyjames", "count": 1, "direction": "star_to_dm"},
+  {"source": "naiem-iqbal-4166631b5", "target": "mivyjames", "count": 1, "direction": "star_to_dm"},
+  {"source": "anamariamaris", "target": "sarah-cardell-756b34228", "count": 1, "direction": "star_to_dm"},
+  {"source": "mike-ore-6b78592a7", "target": "gov-analysis", "count": 3, "direction": "star_to_dm"},
+  {"source": "brian-smith-25b70676", "target": "defra", "count": 3, "direction": "star_to_dm"},
+  {"source": "j-mark-dodds-frsa-a353ab6", "target": "hilary-mcgrady-5aa365216", "count": 1, "direction": "star_to_dm"},
+  {"source": "j-mark-dodds-frsa-a353ab6", "target": "defra", "count": 1, "direction": "star_to_dm"},
+  {"source": "anamariamaris", "target": "ofcom-node", "count": 1, "direction": "star_to_dm"},
+  {"source": "alternativemedicinedoctor", "target": "wes-streeting-mp", "count": 4, "direction": "star_to_dm"},
+  {"source": "vijaykluthra", "target": "wes-streeting-mp", "count": 1, "direction": "star_to_dm"},
+  {"source": "tonyfabrizio", "target": "dm-forte-target", "count": 2, "direction": "star_to_dm"},
+  {"source": "vijaykluthra", "target": "dm-forte-target", "count": 3, "direction": "star_to_dm"},
+  {"source": "naiem-iqbal-4166631b5", "target": "dm-forte-target", "count": 4, "direction": "dm_to_star"},
+  {"source": "tonyfabrizio", "target": "team-defence-info", "count": 2, "direction": "star_to_dm"},
+  {"source": "davidbilger", "target": "team-defence-info", "count": 2, "direction": "star_to_dm"},
+  {"source": "jamesddewar", "target": "defence-digital", "count": 3, "direction": "star_to_dm"},
+  {"source": "naiem-iqbal-4166631b5", "target": "team-defence-info", "count": 1, "direction": "star_to_dm"},
+  {"source": "charles-forte-8a721415", "target": "defence-digital", "count": 1, "direction": "star_to_dm"},
+  {"source": "vijaykluthra", "target": "rt-hon-andrew-stephenson-cbe-028a1531b", "count": 2, "direction": "star_to_dm"},
+  {"source": "orhan-kanala-9241aa2a4", "target": "dm-forte-target", "count": 1, "direction": "star_to_dm"},
+  {"source": "naiem-iqbal-4166631b5", "target": "victoria-cope-mba-fraes-fcips-fwcc-0b497b16", "count": 1, "direction": "star_to_dm"},
+  {"source": "charles-forte-8a721415", "target": "victoria-cope-mba-fraes-fcips-fwcc-0b497b16", "count": 1, "direction": "star_to_dm"},
+  {"source": "davidbilger", "target": "james-lawson", "count": 1, "direction": "star_to_dm"},
+  {"source": "naiem-iqbal-4166631b5", "target": "james-lawson", "count": 1, "direction": "star_to_dm"},
+  {"source": "jamesddewar", "target": "james-lawson", "count": 1, "direction": "star_to_dm"},
+  {"source": "professor-richard-benham-fciis-fbcs-15108649", "target": "richard-morgan-", "count": 1, "direction": "star_to_dm"},
+  {"source": "richard-browne", "target": "ross-a-a6768968", "count": 1, "direction": "star_to_dm"},
+  {"source": "mike-ore-6b78592a7", "target": "sir-martyn-oliver-208265132", "count": 2, "direction": "star_to_dm"},
+  {"source": "richard-browne", "target": "alex-jones-6a741221", "count": 1, "direction": "star_to_dm"},
+  {"source": "dari-taylor-169b2672", "target": "mayorchriscooke", "count": 1, "direction": "star_to_dm"},
+  {"source": "adam-sproston-63872725b", "target": "1markpeters", "count": 1, "direction": "star_to_dm"},
+  {"source": "asimkhwaja", "target": "nathanwhite13", "count": 1, "direction": "dm_to_star"},
+  {"source": "adam-sproston-63872725b", "target": "mark-hazzard-a4b12a60", "count": 1, "direction": "dm_to_star"},
+  {"source": "naiem-iqbal-4166631b5", "target": "sir-tom-copinger-symes-528b1170", "count": 1, "direction": "dm_to_star"},
+  {"source": "tonyfabrizio", "target": "victoria-cope-mba-fraes-fcips-fwcc-0b497b16", "count": 1, "direction": "dm_to_star"},
+  {"source": "charles-forte-8a721415", "target": "dina-kakaras-4305b756", "count": 1, "direction": "dm_to_star"},
+  {"source": "jamesddewar", "target": "dm-forte-target", "count": 1, "direction": "dm_to_star"},
+  {"source": "steph-westbrook-97206724a", "target": "information-commissioner", "count": 5, "direction": "star_to_dm"},
+  {"source": "steph-westbrook-97206724a", "target": "dsit-node", "count": 4, "direction": "star_to_dm"},
+  {"source": "steph-westbrook-97206724a", "target": "ofcom-node", "count": 3, "direction": "star_to_dm"},
+  {"source": "vijaykluthra", "target": "dsit-node", "count": 7, "direction": "star_to_dm"},
+  {"source": "dott-linda-pasqui-phd-in-law-1347b5127", "target": "uk-health-sec", "count": 1, "direction": "star_to_dm"},
+  {"source": "oliver-saunders-890a2739", "target": "dsit-node", "count": 23, "direction": "star_to_dm"},
+  {"source": "oliver-saunders-890a2739", "target": "defra", "count": 1, "direction": "star_to_dm"},
+  {"source": "oliver-saunders-890a2739", "target": "ukcs-node", "count": 2, "direction": "star_to_dm"},
+  {"source": "amandabrocktech", "target": "dsit-node", "count": 9, "direction": "star_to_dm"},
+  {"source": "jacqueline-diaz-nieto-931423b4", "target": "env-agency", "count": 2, "direction": "star_to_dm"},
+  {"source": "peter-austin-447a8b30", "target": "information-commissioner", "count": 2, "direction": "star_to_dm"},
+  {"source": "peter-austin-447a8b30", "target": "env-agency", "count": 1, "direction": "star_to_dm"},
+  {"source": "vijaykluthra", "target": "dhsc", "count": 1, "direction": "star_to_dm"},
+  {"source": "alternativemedicinedoctor", "target": "mhclg", "count": 2, "direction": "star_to_dm"},
+  {"source": "dari-taylor-169b2672", "target": "defra", "count": 1, "direction": "star_to_dm"},
+  {"source": "dari-taylor-169b2672", "target": "dhsc", "count": 1, "direction": "star_to_dm"},
+  {"source": "paul-anthony-edsall-2a1416217", "target": "tfl-node", "count": 1, "direction": "star_to_dm"},
+  {"source": "advsw", "target": "dept-biz-trade", "count": 1, "direction": "star_to_dm"},
+  {"source": "ralph-kachur-67083a53", "target": "dsit-node", "count": 1, "direction": "star_to_dm"},
+  {"source": "professor-richard-benham-fciis-fbcs-15108649", "target": "dsit-node", "count": 1, "direction": "star_to_dm"},
+  {"source": "mike-ore-6b78592a7", "target": "ofsted-node", "count": 2, "direction": "star_to_dm"},
+  {"source": "antonycarpen", "target": "dsit-node", "count": 1, "direction": "star_to_dm"},
+  {"source": "stephen-mclean-01ab7653", "target": "defra", "count": 5, "direction": "star_to_dm"}
+]};
+
+// === GRAPH SETUP ===
+const w = window.innerWidth, h = window.innerHeight;
+const svg = d3.select('#canvas').attr('width', w).attr('height', h);
+
+const defs = svg.append('defs');
+
+// Glow filter for stars
+const glow = defs.append('filter').attr('id','glow-star').attr('x','-50%').attr('y','-50%').attr('width','200%').attr('height','200%');
+glow.append('feGaussianBlur').attr('stdDeviation','4').attr('result','blur');
+const feMerge = glow.append('feMerge');
+feMerge.append('feMergeNode').attr('in','blur');
+feMerge.append('feMergeNode').attr('in','SourceGraphic');
+
+const glowDm = defs.append('filter').attr('id','glow-dm').attr('x','-50%').attr('y','-50%').attr('width','200%').attr('height','200%');
+glowDm.append('feGaussianBlur').attr('stdDeviation','3').attr('result','blur');
+const feMerge2 = glowDm.append('feMerge');
+feMerge2.append('feMergeNode').attr('in','blur');
+feMerge2.append('feMergeNode').attr('in','SourceGraphic');
+
+// Arrow markers
+defs.append('marker').attr('id','arrow-star').attr('viewBox','0 -4 8 8').attr('refX',8).attr('refY',0).attr('markerWidth',5).attr('markerHeight',5).attr('orient','auto')
+  .append('path').attr('d','M0,-4L8,0L0,4').attr('fill','rgba(0,212,255,0.7)');
+defs.append('marker').attr('id','arrow-dm').attr('viewBox','0 -4 8 8').attr('refX',8).attr('refY',0).attr('markerWidth',5).attr('markerHeight',5).attr('orient','auto')
+  .append('path').attr('d','M0,-4L8,0L0,4').attr('fill','rgba(255,107,53,0.9)');
+
+const g = svg.append('g').attr('id','graph');
+const zoom = d3.zoom().scaleExtent([0.1, 4]).on('zoom', e => g.attr('transform', e.transform));
+svg.call(zoom);
+
+// Build adjacency for reciprocal detection
+const reciprocalSet = new Set();
+const edgeMap = {};
+RAW.edges.forEach(e => {
+  const key = [e.source, e.target].sort().join('||');
+  edgeMap[key] = (edgeMap[key] || 0) + 1;
+});
+Object.entries(edgeMap).forEach(([key, count]) => {
+  if (count > 1) reciprocalSet.add(key);
+});
+
+// Build node connection map for tooltips
+const nodeConns = {};
+RAW.edges.forEach(e => {
+  if (!nodeConns[e.source]) nodeConns[e.source] = [];
+  if (!nodeConns[e.target]) nodeConns[e.target] = [];
+  nodeConns[e.source].push({other: e.target, count: e.count, dir: e.direction});
+  nodeConns[e.target].push({other: e.source, count: e.count, dir: e.direction});
+});
+
+// Nodes map
+const nodeMap = {};
+RAW.nodes.forEach(n => nodeMap[n.id] = n);
+
+// === SIMULATION ===
+let frozen = false;
+const maxCount = Math.max(...RAW.edges.map(e => e.count));
+const nodeRadius = n => {
+  const base = n.type === 'cross_star' ? 8 : 6;
+  const scale = Math.sqrt(n.weight / 5);
+  return Math.min(base + scale * 4, 28);
+};
+
+const simulation = d3.forceSimulation(RAW.nodes)
+  .force('link', d3.forceLink(RAW.edges).id(d => d.id).distance(d => {
+    const base = 120;
+    return base + (maxCount - d.count) * 4;
+  }).strength(0.4))
+  .force('charge', d3.forceManyBody().strength(d => d.type === 'cross_star' ? -300 : -180))
+  .force('center', d3.forceCenter(w/2, h/2))
+  .force('collision', d3.forceCollide().radius(d => nodeRadius(d) + 14))
+  .force('x', d3.forceX(d => {
+    if (d.type === 'cross_star') return w * 0.38;
+    return w * 0.62;
+  }).strength(0.06))
+  .force('y', d3.forceY(h/2).strength(0.02))
+  .alphaDecay(0.015);
+
+// Draw edges
+const edgeGroup = g.append('g').attr('id','edges');
+const edges = edgeGroup.selectAll('line')
+  .data(RAW.edges)
+  .join('line')
+  .attr('stroke', d => d.direction === 'star_to_dm' ? 'rgba(0,212,255,0.22)' : 'rgba(255,107,53,0.6)')
+  .attr('stroke-width', d => Math.max(0.6, Math.sqrt(d.count) * 0.9))
+  .attr('marker-end', d => d.direction === 'star_to_dm' ? 'url(#arrow-star)' : 'url(#arrow-dm)')
+  .style('transition', 'opacity 0.2s');
+
+// Reciprocal highlight rings (background circles on nodes)
+const nodeGroup = g.append('g').attr('id','nodes');
+
+const nodeContainers = nodeGroup.selectAll('g')
+  .data(RAW.nodes)
+  .join('g')
+  .attr('class', 'node-container')
+  .style('cursor', 'pointer')
+  .call(d3.drag()
+    .on('start', (event, d) => { if (!frozen) { simulation.alphaTarget(0.2).restart(); } d.fx = d.x; d.fy = d.y; })
+    .on('drag', (event, d) => { d.fx = event.x; d.fy = event.y; })
+    .on('end', (event, d) => { if (!frozen) { simulation.alphaTarget(0); } if (!frozen) { d.fx = null; d.fy = null; } })
+  );
+
+// Reciprocal ring
+nodeContainers.filter(d => {
+  const conns = nodeConns[d.id] || [];
+  return conns.some(c => {
+    const key = [d.id, c.other].sort().join('||');
+    return reciprocalSet.has(key);
+  });
+}).append('circle')
+  .attr('r', d => nodeRadius(d) + 5)
+  .attr('fill', 'none')
+  .attr('stroke', '#c47aff')
+  .attr('stroke-width', 1.5)
+  .attr('stroke-dasharray', '4 3')
+  .attr('opacity', 0.6);
+
+// Main node circles
+nodeContainers.append('circle')
+  .attr('r', d => nodeRadius(d))
+  .attr('fill', d => d.type === 'cross_star' ? '#00d4ff' : '#ff6b35')
+  .attr('fill-opacity', d => d.type === 'cross_star' ? 0.85 : 0.75)
+  .attr('stroke', d => d.type === 'cross_star' ? 'rgba(0,212,255,0.9)' : 'rgba(255,107,53,0.9)')
+  .attr('stroke-width', 1.5)
+  .attr('filter', d => d.type === 'cross_star' ? 'url(#glow-star)' : 'url(#glow-dm)');
+
+// Node labels
+nodeContainers.append('text')
+  .attr('class', 'node-label')
+  .attr('dy', d => nodeRadius(d) + 11)
+  .attr('text-anchor', 'middle')
+  .attr('font-size', d => d.weight > 15 ? '10px' : '8.5px')
+  .attr('fill', d => d.type === 'cross_star' ? 'rgba(0,212,255,0.9)' : 'rgba(255,150,100,0.9)')
+  .text(d => d.label.length > 22 ? d.label.substring(0, 20) + '…' : d.label);
+
+// Tooltip interactions
+nodeContainers
+  .on('mousemove', (event, d) => {
+    const tt = document.getElementById('tooltip');
+    const x = event.clientX, y = event.clientY;
+    tt.style.left = (x + 16) + 'px';
+    tt.style.top = (y - 20) + 'px';
+    if (x > w - 320) tt.style.left = (x - 296) + 'px';
+    if (y > h - 200) tt.style.top = (y - 160) + 'px';
+    tt.classList.add('visible');
+
+    document.getElementById('tt-type').textContent = d.type === 'cross_star' ? 'CROSS-STAR' : 'DECISION-MAKER';
+    document.getElementById('tt-type').className = 'tt-type ' + (d.type === 'cross_star' ? 'star' : 'dm');
+    document.getElementById('tt-name').textContent = d.label;
+    document.getElementById('tt-role').textContent = d.job_title ? d.job_title + (d.company ? ' · ' + d.company : '') : (d.company || '—');
+    document.getElementById('tt-followers').textContent = d.followers > 0 ? d.followers.toLocaleString() : '—';
+    document.getElementById('tt-connections').textContent = d.connections > 0 ? d.connections.toLocaleString() : '—';
+    document.getElementById('tt-interactions').textContent = d.weight.toLocaleString();
+
+    const conns = nodeConns[d.id] || [];
+    const sorted = [...conns].sort((a,b) => b.count - a.count).slice(0, 6);
+    if (sorted.length) {
+      const lines = sorted.map(c => {
+        const other = nodeMap[c.other];
+        const name = other ? (other.label.length > 25 ? other.label.substring(0,23)+'…' : other.label) : c.other;
+        const arrow = c.dir === 'star_to_dm' ? '→' : '←';
+        return `<span>${name}</span> ${arrow} ${c.count}×`;
+      });
+      document.getElementById('tt-conn-list').innerHTML = lines.join('<br>');
+    } else {
+      document.getElementById('tt-conn-list').textContent = '—';
+    }
+
+    // Highlight connected edges
+    edges.attr('opacity', e => (e.source.id === d.id || e.target.id === d.id) ? 1 : 0.08);
+    nodeContainers.attr('opacity', n => {
+      if (n.id === d.id) return 1;
+      const conns2 = nodeConns[d.id] || [];
+      return conns2.some(c => c.other === n.id) ? 1 : 0.2;
+    });
+  })
+  .on('mouseleave', () => {
+    document.getElementById('tooltip').classList.remove('visible');
+    edges.attr('opacity', 1);
+    nodeContainers.attr('opacity', 1);
+  });
+
+// Simulation tick
+simulation.on('tick', () => {
+  edges
+    .attr('x1', d => d.source.x)
+    .attr('y1', d => d.source.y)
+    .attr('x2', d => {
+      const dx = d.target.x - d.source.x, dy = d.target.y - d.source.y;
+      const dist = Math.sqrt(dx*dx + dy*dy) || 1;
+      const r = nodeRadius(d.target) + 8;
+      return d.target.x - (dx/dist)*r;
+    })
+    .attr('y2', d => {
+      const dx = d.target.x - d.source.x, dy = d.target.y - d.source.y;
+      const dist = Math.sqrt(dx*dx + dy*dy) || 1;
+      const r = nodeRadius(d.target) + 8;
+      return d.target.y - (dy/dist)*r;
+    });
+
+  nodeContainers.attr('transform', d => `translate(${d.x},${d.y})`);
+});
+
+// === CONTROLS ===
+function resetZoom() {
+  svg.transition().duration(500).call(zoom.transform, d3.zoomIdentity);
+}
+
+function toggleFreeze() {
+  frozen = !frozen;
+  const btn = document.getElementById('btn-freeze');
+  if (frozen) {
+    simulation.stop();
+    btn.classList.add('active');
+    btn.textContent = 'UNFREEZE';
+    RAW.nodes.forEach(d => { d.fx = d.x; d.fy = d.y; });
+  } else {
+    RAW.nodes.forEach(d => { d.fx = null; d.fy = null; });
+    simulation.alphaTarget(0.1).restart();
+    setTimeout(() => simulation.alphaTarget(0), 2000);
+    btn.classList.remove('active');
+    btn.textContent = 'FREEZE';
+  }
+}
+
+let activeFilter = 'all';
+function setFilter(filter, el) {
+  activeFilter = filter;
+  document.querySelectorAll('.filter-chip').forEach(c => {
+    c.classList.remove('active-star', 'active-dm', 'active-both');
+  });
+  if (filter === 'all') el.classList.add('active-both');
+  else if (filter === 'star') el.classList.add('active-star');
+  else if (filter === 'dm') el.classList.add('active-dm');
+  else el.classList.add('active-both');
+
+  nodeContainers.attr('opacity', d => {
+    if (filter === 'all') return 1;
+    if (filter === 'star') return d.type === 'cross_star' ? 1 : 0.1;
+    if (filter === 'dm') return d.type === 'decision_maker' ? 1 : 0.1;
+    if (filter === 'reciprocal') {
+      const conns = nodeConns[d.id] || [];
+      const isRecip = conns.some(c => {
+        const key = [d.id, c.other].sort().join('||');
+        return reciprocalSet.has(key);
+      });
+      return isRecip ? 1 : 0.1;
+    }
+    return 1;
+  });
+  edges.attr('opacity', e => {
+    if (filter === 'all') return 1;
+    if (filter === 'star') return e.source.type === 'cross_star' ? 1 : 0.05;
+    if (filter === 'dm') return e.target.type === 'decision_maker' ? 1 : 0.05;
+    if (filter === 'reciprocal') {
+      const key = [e.source.id, e.target.id].sort().join('||');
+      return reciprocalSet.has(key) ? 1 : 0.05;
+    }
+    return 1;
+  });
+}
+
+function searchNodes(term) {
+  const t = term.toLowerCase().trim();
+  if (!t) {
+    nodeContainers.attr('opacity', 1);
+    edges.attr('opacity', 1);
+    return;
+  }
+  const matched = new Set();
+  RAW.nodes.forEach(n => { if (n.label.toLowerCase().includes(t)) matched.add(n.id); });
+  const connectedIds = new Set();
+  matched.forEach(id => {
+    (nodeConns[id] || []).forEach(c => connectedIds.add(c.other));
+  });
+  nodeContainers.attr('opacity', d => matched.has(d.id) ? 1 : connectedIds.has(d.id) ? 0.5 : 0.08);
+  edges.attr('opacity', e => {
+    const src = e.source.id || e.source;
+    const tgt = e.target.id || e.target;
+    return (matched.has(src) || matched.has(tgt)) ? 1 : 0.05;
+  });
+}
+
+function downloadSVG() {
+  const svgEl = document.getElementById('canvas');
+  const blob = new Blob([svgEl.outerHTML], {type: 'image/svg+xml'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'linkedin_network_map.svg';
+  a.click();
+}
+
+// Resize handling
+window.addEventListener('resize', () => {
+  const nw = window.innerWidth, nh = window.innerHeight;
+  svg.attr('width', nw).attr('height', nh);
+  simulation.force('center', d3.forceCenter(nw/2, nh/2)).alpha(0.1).restart();
+});
+</script>
+</body>
+</html>
